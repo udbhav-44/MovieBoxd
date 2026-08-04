@@ -11,16 +11,26 @@ const MODELS: ClaudeModel[] = [
   "claude-opus-5",
 ];
 
-export async function GET() {
-  const settings = await getSettings();
-  return NextResponse.json({
-    tmdbApiKey: settings.tmdbApiKey,
-    anthropicApiKey: settings.anthropicApiKey,
+/** Enough to recognise which key is stored, useless to anyone who steals it. */
+function hint(key: string): string {
+  const trimmed = key.trim();
+  if (!trimmed) return "";
+  return `••••${trimmed.slice(-4)}`;
+}
+
+function payload(settings: Awaited<ReturnType<typeof getSettings>>) {
+  return {
+    tmdbKeyHint: hint(settings.tmdbApiKey),
+    anthropicKeyHint: hint(settings.anthropicApiKey),
     claudeModel: settings.claudeModel,
     hasKey: Boolean(settings.tmdbApiKey.trim()),
     hasClaudeKey: Boolean(settings.anthropicApiKey.trim()),
     models: MODELS,
-  });
+  };
+}
+
+export async function GET() {
+  return NextResponse.json(payload(await getSettings()));
 }
 
 export async function PUT(request: Request) {
@@ -28,26 +38,29 @@ export async function PUT(request: Request) {
     tmdbApiKey?: string;
     anthropicApiKey?: string;
     claudeModel?: ClaudeModel;
+    clearTmdbKey?: boolean;
+    clearAnthropicKey?: boolean;
   };
 
   const patch: Parameters<typeof updateSettings>[0] = {};
-  if (body.tmdbApiKey !== undefined) {
+
+  // An omitted or blank key means "leave it alone", so the UI never has to
+  // hold the real value just to save an unrelated setting.
+  if (body.clearTmdbKey) {
+    patch.tmdbApiKey = "";
+  } else if (body.tmdbApiKey?.trim()) {
     patch.tmdbApiKey = body.tmdbApiKey.trim();
   }
-  if (body.anthropicApiKey !== undefined) {
+
+  if (body.clearAnthropicKey) {
+    patch.anthropicApiKey = "";
+  } else if (body.anthropicApiKey?.trim()) {
     patch.anthropicApiKey = body.anthropicApiKey.trim();
   }
+
   if (body.claudeModel && MODELS.includes(body.claudeModel)) {
     patch.claudeModel = body.claudeModel;
   }
 
-  const settings = await updateSettings(patch);
-  return NextResponse.json({
-    tmdbApiKey: settings.tmdbApiKey,
-    anthropicApiKey: settings.anthropicApiKey,
-    claudeModel: settings.claudeModel,
-    hasKey: Boolean(settings.tmdbApiKey),
-    hasClaudeKey: Boolean(settings.anthropicApiKey),
-    models: MODELS,
-  });
+  return NextResponse.json(payload(await updateSettings(patch)));
 }

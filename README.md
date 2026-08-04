@@ -61,6 +61,12 @@ Each row is matched against TMDB and enriched with genres, cast, crew, and keywo
 | `npm run start` | Serve production build |
 | `npm run lint` | ESLint |
 
+## Deploying
+
+See **[DEPLOY.md](DEPLOY.md)** for running MovieBoxd on your own subdomain with Docker, automatic HTTPS via Caddy, and a password gate.
+
+Set `APP_PASSWORD` in any deployment. Without it the app — and the API keys it stores — are open to anyone who finds the URL. Locally, leaving it unset skips the login screen.
+
 ## Data
 
 Local JSON store at `data/store.json` (gitignored). Delete that file to reset the archive and keys.
