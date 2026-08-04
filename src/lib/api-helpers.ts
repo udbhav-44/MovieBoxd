@@ -18,7 +18,10 @@ export function errorResponse(error: unknown, fallback = "Unexpected error") {
     return { error: error.message, status: error.status };
   }
   if (error instanceof Error) {
+    // Unexpected failures lose their stack once serialized to the client.
+    console.error("[movieboxd] unhandled error:", error);
     return { error: error.message, status: 500 };
   }
+  console.error("[movieboxd] unhandled non-error throw:", error);
   return { error: fallback, status: 500 };
 }

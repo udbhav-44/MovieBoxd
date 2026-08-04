@@ -23,18 +23,71 @@ async function ensureStore(): Promise<void> {
   }
 }
 
+function str(value: unknown, fallback = ""): string {
+  return typeof value === "string" ? value : fallback;
+}
+
+function strArray(value: unknown): string[] {
+  return Array.isArray(value)
+    ? value.filter((v): v is string => typeof v === "string")
+    : [];
+}
+
+function numOrNull(value: unknown): number | null {
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+/**
+ * The store is a hand-editable file that has also outlived a schema change,
+ * so a record may be missing fields the rest of the app treats as required.
+ * Coercing on read keeps one bad row from breaking every page.
+ */
+function normalizeMovie(raw: unknown): WatchedMovie | null {
+  if (!raw || typeof raw !== "object") return null;
+  const m = raw as Record<string, unknown>;
+
+  const title = str(m.title).trim();
+  if (!title) return null;
+
+  const now = new Date().toISOString();
+  return {
+    id: str(m.id) || createId(),
+    tmdbId: numOrNull(m.tmdbId),
+    title,
+    year: numOrNull(m.year),
+    posterPath: typeof m.posterPath === "string" ? m.posterPath : null,
+    backdropPath: typeof m.backdropPath === "string" ? m.backdropPath : null,
+    overview: str(m.overview),
+    genres: strArray(m.genres),
+    themes: strArray(m.themes),
+    actors: strArray(m.actors),
+    directors: strArray(m.directors),
+    runtime: numOrNull(m.runtime),
+    rating: numOrNull(m.rating),
+    review: str(m.review),
+    watchedDate: typeof m.watchedDate === "string" ? m.watchedDate : null,
+    rewatchable: m.rewatchable === true,
+    source: m.source === "manual" ? "manual" : "letterboxd",
+    createdAt: str(m.createdAt, now),
+    updatedAt: str(m.updatedAt, now),
+  };
+}
+
 export async function readStore(): Promise<AppStore> {
   await ensureStore();
   const raw = await fs.readFile(STORE_PATH, "utf8");
   try {
-    const parsed = JSON.parse(raw) as AppStore;
+    const parsed = JSON.parse(raw) as Partial<AppStore>;
+    const movies = Array.isArray(parsed.movies) ? parsed.movies : [];
     return {
       settings: {
-        tmdbApiKey: parsed.settings?.tmdbApiKey ?? "",
-        anthropicApiKey: parsed.settings?.anthropicApiKey ?? "",
+        tmdbApiKey: str(parsed.settings?.tmdbApiKey),
+        anthropicApiKey: str(parsed.settings?.anthropicApiKey),
         claudeModel: parsed.settings?.claudeModel ?? "claude-haiku-4-5",
       },
-      movies: Array.isArray(parsed.movies) ? parsed.movies : [],
+      movies: movies
+        .map(normalizeMovie)
+        .filter((m): m is WatchedMovie => m !== null),
     };
   } catch {
     return structuredClone(DEFAULT_STORE);
@@ -43,7 +96,10 @@ export async function readStore(): Promise<AppStore> {
 
 export async function writeStore(store: AppStore): Promise<void> {
   await ensureStore();
-  await fs.writeFile(STORE_PATH, JSON.stringify(store, null, 2), "utf8");
+  // Write-then-rename so an interrupted write can't truncate the archive.
+  const tmpPath = `${STORE_PATH}.${process.pid}.tmp`;
+  await fs.writeFile(tmpPath, JSON.stringify(store, null, 2), "utf8");
+  await fs.rename(tmpPath, STORE_PATH);
 }
 
 export async function getSettings(): Promise<AppSettings> {
