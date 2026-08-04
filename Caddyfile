@@ -1,0 +1,19 @@
+{$DOMAIN} {
+	encode gzip
+
+	# Certificates are obtained and renewed automatically via Let's Encrypt.
+	reverse_proxy app:3000 {
+		# Recommendations and imports stream for a while; don't cut them off.
+		flush_interval -1
+		transport http {
+			response_header_timeout 5m
+		}
+	}
+
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "DENY"
+		Referrer-Policy "no-referrer"
+	}
+}

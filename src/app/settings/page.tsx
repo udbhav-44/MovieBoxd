@@ -35,6 +35,8 @@ export default function SettingsPage() {
   const [models, setModels] = useState<ClaudeModel[]>(["claude-haiku-4-5"]);
   const [hasKey, setHasKey] = useState(false);
   const [hasClaudeKey, setHasClaudeKey] = useState(false);
+  const [tmdbHint, setTmdbHint] = useState("");
+  const [claudeHint, setClaudeHint] = useState("");
   const [ready, setReady] = useState(false);
   const [saving, setSaving] = useState(false);
   const [status, setStatus] = useState<string | null>(null);
@@ -45,8 +47,9 @@ export default function SettingsPage() {
       const res = await fetch("/api/settings");
       const data = await res.json();
       if (cancelled) return;
-      setTmdbKey(data.tmdbApiKey ?? "");
-      setClaudeKey(data.anthropicApiKey ?? "");
+      // Only hints come back; the real keys never leave the server.
+      setTmdbHint(data.tmdbKeyHint ?? "");
+      setClaudeHint(data.anthropicKeyHint ?? "");
       setModel(data.claudeModel ?? "claude-haiku-4-5");
       setModels(data.models ?? ["claude-haiku-4-5"]);
       setHasKey(Boolean(data.hasKey));
@@ -59,8 +62,7 @@ export default function SettingsPage() {
     };
   }, []);
 
-  async function onSubmit(e: FormEvent) {
-    e.preventDefault();
+  async function save(extra: Record<string, unknown> = {}) {
     setSaving(true);
     setStatus(null);
     try {
@@ -68,21 +70,32 @@ export default function SettingsPage() {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
+          // Blank means "keep the stored key" so an unrelated save is safe.
           tmdbApiKey: tmdbKey.trim(),
           anthropicApiKey: claudeKey.trim(),
           claudeModel: model,
+          ...extra,
         }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Could not save");
       setHasKey(Boolean(data.hasKey));
       setHasClaudeKey(Boolean(data.hasClaudeKey));
+      setTmdbHint(data.tmdbKeyHint ?? "");
+      setClaudeHint(data.anthropicKeyHint ?? "");
+      setTmdbKey("");
+      setClaudeKey("");
       setStatus("Settings saved.");
     } catch (err) {
       setStatus(err instanceof Error ? err.message : "Save failed");
     } finally {
       setSaving(false);
     }
+  }
+
+  async function onSubmit(e: FormEvent) {
+    e.preventDefault();
+    await save();
   }
 
   return (
@@ -115,7 +128,9 @@ export default function SettingsPage() {
               autoComplete="off"
               spellCheck={false}
               disabled={!ready}
-              placeholder="Paste your v3 API key"
+              placeholder={
+                hasKey ? `Stored ${tmdbHint} — type to replace` : "Paste your v3 API key"
+              }
               className="mt-2 w-full border border-[var(--line)] bg-transparent px-3 py-3 text-sm outline-none transition focus:border-[var(--ink)] disabled:opacity-60"
             />
           </label>
@@ -148,10 +163,24 @@ export default function SettingsPage() {
               autoComplete="off"
               spellCheck={false}
               disabled={!ready}
-              placeholder="sk-ant-..."
+              placeholder={
+                hasClaudeKey
+                  ? `Stored ${claudeHint} — type to replace`
+                  : "sk-ant-..."
+              }
               className="mt-2 w-full border border-[var(--line)] bg-transparent px-3 py-3 text-sm outline-none transition focus:border-[var(--ink)] disabled:opacity-60"
             />
           </label>
+          {hasClaudeKey ? (
+            <button
+              type="button"
+              onClick={() => save({ clearAnthropicKey: true })}
+              disabled={saving}
+              className="text-xs uppercase tracking-[0.16em] text-[var(--ink-soft)] transition hover:text-[var(--accent)] disabled:opacity-60"
+            >
+              Remove stored key
+            </button>
+          ) : null}
 
           <fieldset className="mt-2">
             <legend className="text-xs uppercase tracking-[0.16em] text-[var(--ink-soft)]">
