@@ -12,6 +12,7 @@ const DEFAULT_STORE: AppStore = {
     claudeModel: "claude-haiku-4-5",
   },
   movies: [],
+  dismissed: [],
 };
 
 async function ensureStore(): Promise<void> {
@@ -79,6 +80,7 @@ export async function readStore(): Promise<AppStore> {
   try {
     const parsed = JSON.parse(raw) as Partial<AppStore>;
     const movies = Array.isArray(parsed.movies) ? parsed.movies : [];
+    const dismissed = Array.isArray(parsed.dismissed) ? parsed.dismissed : [];
     return {
       settings: {
         tmdbApiKey: str(parsed.settings?.tmdbApiKey),
@@ -88,6 +90,9 @@ export async function readStore(): Promise<AppStore> {
       movies: movies
         .map(normalizeMovie)
         .filter((m): m is WatchedMovie => m !== null),
+      dismissed: dismissed.filter(
+        (id): id is number => typeof id === "number" && Number.isFinite(id),
+      ),
     };
   } catch {
     return structuredClone(DEFAULT_STORE);
@@ -123,6 +128,27 @@ export async function listMovies(): Promise<WatchedMovie[]> {
     const bDate = b.watchedDate || b.createdAt;
     return bDate.localeCompare(aDate);
   });
+}
+
+export async function getDismissed(): Promise<number[]> {
+  const store = await readStore();
+  return store.dismissed;
+}
+
+export async function dismissMovie(tmdbId: number): Promise<number[]> {
+  const store = await readStore();
+  if (!store.dismissed.includes(tmdbId)) {
+    store.dismissed.push(tmdbId);
+    await writeStore(store);
+  }
+  return store.dismissed;
+}
+
+export async function undismissMovie(tmdbId: number): Promise<number[]> {
+  const store = await readStore();
+  store.dismissed = store.dismissed.filter((id) => id !== tmdbId);
+  await writeStore(store);
+  return store.dismissed;
 }
 
 export async function upsertMovies(

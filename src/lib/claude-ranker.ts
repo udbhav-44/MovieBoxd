@@ -77,17 +77,23 @@ export async function rankWithClaude({
   dossier,
   candidates,
   limit,
+  genreFocus = [],
 }: {
   apiKey: string;
   model: ClaudeModel;
   dossier: string;
   candidates: Recommendation[];
   limit: number;
+  genreFocus?: string[];
 }): Promise<Recommendation[]> {
   if (!candidates.length) return [];
 
+  const focus = genreFocus.length
+    ? `\n\nGENRE REQUEST\nThe viewer specifically asked for ${genreFocus.join(" / ")} tonight. Every pick must fit that request, and should be among the strongest examples of it. Within that constraint, rank by fit to their taste and say how each film connects to what they already love.`
+    : "";
+
   const prompt = `VIEWER DOSSIER
-${dossier}
+${dossier}${focus}
 
 CANDIDATE FILMS (${candidates.length})
 ${candidates.map(candidateLine).join("\n")}
