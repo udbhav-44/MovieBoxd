@@ -26,10 +26,10 @@ export default function TastePage() {
         <p className="text-xs uppercase tracking-[0.22em] text-[var(--accent)]">
           Profile
         </p>
-        <h1 className="display mt-3 text-5xl leading-[0.95] sm:text-6xl">
+        <h1 className="display mt-3 text-4xl sm:text-5xl">
           Taste
         </h1>
-        <p className="mt-4 text-base leading-relaxed text-[var(--ink-soft)]">
+        <p className="mt-5 text-[1.05rem] leading-relaxed text-[var(--ink-soft)]">
           A living map of what you reward with high ratings — genres, people,
           themes, and story signals mined from overviews and reviews.
         </p>

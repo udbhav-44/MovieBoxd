@@ -52,10 +52,10 @@ export default function SettingsPage() {
         <p className="text-xs uppercase tracking-[0.22em] text-[var(--accent)]">
           Configuration
         </p>
-        <h1 className="display mt-3 text-5xl leading-[0.95] sm:text-6xl">
+        <h1 className="display mt-3 text-4xl sm:text-5xl">
           Settings
         </h1>
-        <p className="mt-4 text-base leading-relaxed text-[var(--ink-soft)]">
+        <p className="mt-5 text-[1.05rem] leading-relaxed text-[var(--ink-soft)]">
           MovieBoxd is single-user and stores your key locally in{" "}
           <code className="text-[var(--ink)]">data/store.json</code>. Get a free
           key from{" "}

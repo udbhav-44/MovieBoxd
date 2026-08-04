@@ -41,10 +41,10 @@ export function ArchiveClient({
         <p className="text-xs uppercase tracking-[0.22em] text-[var(--accent)]">
           Watched
         </p>
-        <h1 className="display mt-3 text-5xl leading-[0.95] sm:text-6xl">
+        <h1 className="display mt-3 text-4xl sm:text-5xl">
           Archive
         </h1>
-        <p className="mt-4 text-base leading-relaxed text-[var(--ink-soft)]">
+        <p className="mt-5 text-[1.05rem] leading-relaxed text-[var(--ink-soft)]">
           Everything you&apos;ve seen. Toggle rewatchable to let a title re-enter
           For You.
         </p>

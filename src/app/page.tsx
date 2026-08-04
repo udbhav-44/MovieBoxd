@@ -58,10 +58,10 @@ export default function ForYouPage() {
         <p className="text-xs uppercase tracking-[0.22em] text-[var(--accent)]">
           Tonight&apos;s cut
         </p>
-        <h1 className="display mt-3 text-5xl leading-[0.95] sm:text-6xl">
+        <h1 className="display mt-3 text-4xl sm:text-5xl">
           For You
         </h1>
-        <p className="mt-4 max-w-xl text-base leading-relaxed text-[var(--ink-soft)]">
+        <p className="mt-5 max-w-xl text-[1.05rem] leading-relaxed text-[var(--ink-soft)]">
           Recommendations shaped by the stories, genres, themes, actors, and
           ratings in your archive. Watched titles stay out unless you mark them
           rewatchable.

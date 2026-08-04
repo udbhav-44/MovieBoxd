@@ -7,7 +7,7 @@ export function RecommendationCard({ rec }: { rec: Recommendation }) {
       <Poster path={rec.posterPath} title={rec.title} />
       <div className="flex min-w-0 flex-col justify-center">
         <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
-          <h3 className="display text-2xl leading-none">{rec.title}</h3>
+          <h3 className="display text-2xl leading-snug">{rec.title}</h3>
           {rec.year ? (
             <span className="text-sm text-[var(--ink-soft)]">{rec.year}</span>
           ) : null}

@@ -91,10 +91,10 @@ export default function AddPage() {
         <p className="text-xs uppercase tracking-[0.22em] text-[var(--accent)]">
           Intake
         </p>
-        <h1 className="display mt-3 text-5xl leading-[0.95] sm:text-6xl">
+        <h1 className="display mt-3 text-4xl sm:text-5xl">
           Add
         </h1>
-        <p className="mt-4 text-base leading-relaxed text-[var(--ink-soft)]">
+        <p className="mt-5 text-[1.05rem] leading-relaxed text-[var(--ink-soft)]">
           Drop a Letterboxd CSV, or search TMDB and file a title by hand.
         </p>
       </section>
@@ -183,7 +183,7 @@ export default function AddPage() {
             >
               <Poster path={hit.posterPath} title={hit.title} />
               <div>
-                <h3 className="display text-xl leading-none">
+                <h3 className="display text-xl leading-snug">
                   {hit.title}{" "}
                   {hit.year ? (
                     <span className="text-base text-[var(--ink-soft)]">
