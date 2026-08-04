@@ -1,3 +1,4 @@
+import { canonicalize, byMetricAsc, byMetricDesc } from "./ordering";
 import { buildTasteProfile } from "./preference";
 import type { TasteProfile, WatchedMovie } from "./types";
 
@@ -22,34 +23,46 @@ function buckets(items: { name: string; count: number }[], limit: number) {
 }
 
 /**
- * Compresses the watch history into a prompt-sized portrait. Reviews and
- * outlier ratings carry the most signal, so those survive truncation first.
+ * Compresses the watch history into a prompt-sized portrait.
+ *
+ * The archive is treated as an unordered set: everything below selects on
+ * merit and breaks ties on the film's own identity, so importing the same
+ * library in a different order produces a byte-identical dossier.
  */
-export function buildTasteDossier(movies: WatchedMovie[]): {
+export function buildTasteDossier(input: WatchedMovie[]): {
   dossier: string;
   profile: TasteProfile;
 } {
+  const movies = canonicalize(input);
   const profile = buildTasteProfile(movies);
 
   const rated = movies.filter((m) => m.rating != null);
-  const loved = [...rated]
+
+  const loved = rated
     .filter((m) => (m.rating ?? 0) >= 3.5)
-    .sort((a, b) => (b.rating ?? 0) - (a.rating ?? 0))
+    .sort(byMetricDesc((m) => m.rating ?? 0))
     .slice(0, 25);
-  const disliked = [...rated]
+
+  const disliked = rated
     .filter((m) => (m.rating ?? 5) <= 2.5)
-    .sort((a, b) => (a.rating ?? 0) - (b.rating ?? 0))
+    .sort(byMetricAsc((m) => m.rating ?? 0))
     .slice(0, 12);
+
+  const lovedIds = new Set(loved.map((m) => m.id));
+  // Longer notes carry more taste signal than whichever happened to import first.
   const reviewed = movies
-    .filter((m) => m.review.trim() && !loved.includes(m))
+    .filter((m) => m.review.trim() && !lovedIds.has(m.id))
+    .sort(byMetricDesc((m) => m.review.trim().length))
     .slice(0, 12);
-  const recent = [...movies]
-    .filter((m) => m.watchedDate)
-    .sort((a, b) => (b.watchedDate ?? "").localeCompare(a.watchedDate ?? ""))
+
+  const rewatchable = movies
+    .filter((m) => m.rewatchable)
+    .sort(byMetricDesc((m) => m.rating ?? 0))
     .slice(0, 12);
 
   const sections: string[] = [
     `WATCH HISTORY SIZE: ${profile.totalWatched} films, ${profile.ratedCount} rated, average rating ${profile.avgRating || "n/a"}/5.`,
+    "This is a complete library, not a timeline. Weigh every film on its rating and notes; the order they appear carries no meaning.",
   ];
 
   if (profile.topGenres.length) {
@@ -79,11 +92,6 @@ export function buildTasteDossier(movies: WatchedMovie[]): {
   if (reviewed.length) {
     sections.push(`FILMS WITH WRITTEN NOTES:\n${reviewed.map(line).join("\n")}`);
   }
-  if (recent.length) {
-    sections.push(`RECENTLY WATCHED:\n${recent.map(line).join("\n")}`);
-  }
-
-  const rewatchable = movies.filter((m) => m.rewatchable).slice(0, 12);
   if (rewatchable.length) {
     sections.push(
       `MARKED REWATCHABLE (comfort films): ${rewatchable

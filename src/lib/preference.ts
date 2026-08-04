@@ -1,3 +1,4 @@
+import { canonicalize } from "./ordering";
 import type { TasteBucket, TasteProfile, WatchedMovie } from "./types";
 
 const STORY_LEXICON: Record<string, string[]> = {
@@ -43,7 +44,14 @@ function toBuckets(
 ): TasteBucket[] {
   return [...map.entries()]
     .map(([name, v]) => ({ name, score: Number(v.score.toFixed(2)), count: v.count }))
-    .sort((a, b) => b.score - a.score || b.count - a.count)
+    .sort(
+      (a, b) =>
+        b.score - a.score ||
+        b.count - a.count ||
+        // Without this, equal buckets fall back to insertion order, which
+        // means import order would decide what the profile shows.
+        a.name.localeCompare(b.name, "en", { sensitivity: "base" }),
+    )
     .slice(0, limit);
 }
 
@@ -75,7 +83,10 @@ function detectStorySignals(movies: WatchedMovie[]): TasteBucket[] {
   return toBuckets(map, 14);
 }
 
-export function buildTasteProfile(movies: WatchedMovie[]): TasteProfile {
+export function buildTasteProfile(input: WatchedMovie[]): TasteProfile {
+  // Scores are sums, but float addition is not perfectly associative, so
+  // canonicalize first to keep results identical across input orderings.
+  const movies = canonicalize(input);
   const genres = new Map<string, { score: number; count: number }>();
   const actors = new Map<string, { score: number; count: number }>();
   const directors = new Map<string, { score: number; count: number }>();

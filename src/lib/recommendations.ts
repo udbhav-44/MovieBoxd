@@ -1,5 +1,6 @@
 import { rankWithClaude } from "./claude-ranker";
 import { buildTasteDossier } from "./dossier";
+import { byMetricDesc, canonicalize } from "./ordering";
 import { exclusionTmdbIds } from "./preference";
 import {
   discoverMovies,
@@ -200,7 +201,7 @@ export interface RecommendationResult {
 
 export async function generateRecommendations(
   settings: AppSettings,
-  movies: WatchedMovie[],
+  input: WatchedMovie[],
   options: RecommendationOptions & {
     dismissed?: number[];
     onPartial?: (partial: RecommendationResult) => void;
@@ -216,6 +217,7 @@ export async function generateRecommendations(
   } = options;
 
   const apiKey = settings.tmdbApiKey;
+  const movies = canonicalize(input);
   const { dossier, profile } = buildTasteDossier(movies);
   const excluded = exclusionTmdbIds(movies);
   for (const id of dismissed) excluded.add(id);
@@ -225,9 +227,11 @@ export async function generateRecommendations(
     return { recommendations: [], profile, engine: "heuristic" };
   }
 
-  const seeds = [...movies]
+  // Identity tie-break keeps seed choice stable no matter what order the
+  // archive arrives in, so two equally loved films can't swap places.
+  const seeds = movies
     .filter((m) => m.tmdbId && (m.rating == null || m.rating >= 3.5))
-    .sort((a, b) => (b.rating ?? 0) - (a.rating ?? 0))
+    .sort(byMetricDesc((m) => m.rating ?? 0))
     .slice(0, 12);
 
   // Each refresh walks further into the catalogue instead of re-serving page 1.
