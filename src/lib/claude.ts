@@ -26,12 +26,18 @@ export async function askClaude({
   system,
   prompt,
   maxTokens = 4000,
+  cacheSystem = false,
 }: {
   apiKey: string;
   model: ClaudeModel;
   system: string;
   prompt: string;
   maxTokens?: number;
+  /**
+   * Caches the system block. Worth it when the same prefix is reused within
+   * the 5-minute window — refreshing For You re-sends an identical dossier.
+   */
+  cacheSystem?: boolean;
 }): Promise<string> {
   const client = claudeClient(apiKey);
 
@@ -39,7 +45,15 @@ export async function askClaude({
     const message = await client.messages.create({
       model,
       max_tokens: maxTokens,
-      system,
+      system: cacheSystem
+        ? [
+            {
+              type: "text",
+              text: system,
+              cache_control: { type: "ephemeral" },
+            },
+          ]
+        : system,
       messages: [{ role: "user", content: prompt }],
     });
 

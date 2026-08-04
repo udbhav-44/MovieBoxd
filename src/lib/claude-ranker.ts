@@ -26,13 +26,13 @@ Return ONLY valid JSON, no prose or code fences, in this exact shape:
     {
       "tmdbId": 123,
       "confidence": 87,
-      "pitch": "One or two sentences on why this lands for them specifically.",
+      "pitch": "One sentence on why this lands for them specifically.",
       "reasons": ["Short concrete reason", "Another concrete reason"]
     }
   ]
 }
 
-Order picks best-first. confidence is 0-100. Give each pick 2-3 reasons, each under 90 characters.`;
+Order picks best-first. confidence is 0-100. Keep the pitch to one sentence and give each pick exactly 2 reasons, each under 70 characters. Be concise: every extra word costs the user latency.`;
 
 const NARRATIVE_SYSTEM = `You are a perceptive film critic writing a short profile of one viewer's taste, based on their complete watch history with ratings and notes.
 
@@ -61,9 +61,10 @@ function candidateLine(rec: Recommendation): string {
     `id=${rec.tmdbId}`,
     `${rec.title}${rec.year ? ` (${rec.year})` : ""}`,
   ];
-  if (rec.genres.length) bits.push(rec.genres.slice(0, 3).join("/"));
+  if (rec.genres.length) bits.push(rec.genres.slice(0, 2).join("/"));
   if (rec.voteAverage) bits.push(`TMDB ${rec.voteAverage.toFixed(1)}`);
-  const overview = rec.overview ? ` — ${rec.overview.slice(0, 220)}` : "";
+  // Enough plot to judge fit without paying for the full synopsis.
+  const overview = rec.overview ? ` — ${rec.overview.slice(0, 140)}` : "";
   return `- ${bits.join(" · ")}${overview}`;
 }
 
@@ -92,20 +93,22 @@ export async function rankWithClaude({
     ? `\n\nGENRE REQUEST\nThe viewer specifically asked for ${genreFocus.join(" / ")} tonight. Every pick must fit that request, and should be among the strongest examples of it. Within that constraint, rank by fit to their taste and say how each film connects to what they already love.`
     : "";
 
-  const prompt = `VIEWER DOSSIER
-${dossier}${focus}
+  // The dossier sits in the cached system block because it is identical
+  // across refreshes; only the candidate list varies.
+  const system = `${RANKER_SYSTEM}\n\nVIEWER DOSSIER\n${dossier}`;
 
-CANDIDATE FILMS (${candidates.length})
-${candidates.map(candidateLine).join("\n")}
+  const prompt = `CANDIDATE FILMS (${candidates.length})
+${candidates.map(candidateLine).join("\n")}${focus}
 
 Select and rank the best ${limit} films for this viewer from the candidates above. Use only tmdbId values from the candidate list.`;
 
   const raw = await askClaude({
     apiKey,
     model,
-    system: RANKER_SYSTEM,
+    system,
     prompt,
-    maxTokens: 4000,
+    maxTokens: 2000,
+    cacheSystem: true,
   });
 
   const parsed = parseJsonResponse<{ picks?: ClaudePick[] }>(raw);
