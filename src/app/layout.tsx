@@ -1,18 +1,18 @@
 import type { Metadata } from "next";
-import { Figtree, Instrument_Serif } from "next/font/google";
+import { Fraunces, Source_Sans_3 } from "next/font/google";
 import { Nav } from "@/components/Nav";
 import "./globals.css";
 
-const body = Figtree({
+const body = Source_Sans_3({
   variable: "--font-body",
   subsets: ["latin"],
   weight: ["400", "500", "600", "700"],
 });
 
-const display = Instrument_Serif({
+const display = Fraunces({
   variable: "--font-display",
   subsets: ["latin"],
-  weight: ["400"],
+  weight: ["400", "500", "600"],
 });
 
 export const metadata: Metadata = {

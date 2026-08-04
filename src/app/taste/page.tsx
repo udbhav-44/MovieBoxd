@@ -2,10 +2,13 @@
 
 import { useEffect, useState } from "react";
 import { TasteBars } from "@/components/TasteBars";
-import type { TasteProfile } from "@/lib/types";
+import type { TasteNarrative, TasteProfile } from "@/lib/types";
 
 export default function TastePage() {
   const [profile, setProfile] = useState<TasteProfile | null>(null);
+  const [narrative, setNarrative] = useState<TasteNarrative | null>(null);
+  const [reading, setReading] = useState(false);
+  const [readError, setReadError] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -20,16 +23,29 @@ export default function TastePage() {
     };
   }, []);
 
+  async function readTaste() {
+    setReading(true);
+    setReadError(null);
+    try {
+      const res = await fetch("/api/taste?narrative=1");
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Could not read your taste");
+      setNarrative(data.narrative ?? null);
+    } catch (err) {
+      setReadError(err instanceof Error ? err.message : "Something went wrong");
+    } finally {
+      setReading(false);
+    }
+  }
+
   return (
     <div className="page-enter">
       <section className="max-w-2xl">
         <p className="text-xs uppercase tracking-[0.22em] text-[var(--accent)]">
           Profile
         </p>
-        <h1 className="display mt-3 text-5xl leading-[0.95] sm:text-6xl">
-          Taste
-        </h1>
-        <p className="mt-4 text-base leading-relaxed text-[var(--ink-soft)]">
+        <h1 className="display mt-3 text-4xl sm:text-5xl">Taste</h1>
+        <p className="mt-5 text-[1.05rem] leading-relaxed text-[var(--ink-soft)]">
           A living map of what you reward with high ratings — genres, people,
           themes, and story signals mined from overviews and reviews.
         </p>
@@ -61,6 +77,63 @@ export default function TastePage() {
               </div>
             ))}
           </div>
+
+          <section className="mt-10 border border-[var(--line)] bg-[var(--bg-elevated)] p-5 sm:p-6">
+            <div className="flex flex-wrap items-baseline justify-between gap-3">
+              <h2 className="display text-2xl">Critic&apos;s read</h2>
+              <button
+                type="button"
+                onClick={readTaste}
+                disabled={reading || !profile.totalWatched}
+                className="bg-[var(--accent)] px-4 py-2 text-sm text-[var(--bg-elevated)] transition-colors hover:bg-[var(--accent-deep)] disabled:opacity-60"
+              >
+                {reading ? "Reading…" : narrative ? "Re-read" : "Ask Claude"}
+              </button>
+            </div>
+
+            {readError ? (
+              <p className="mt-3 text-sm text-[var(--accent)]">{readError}</p>
+            ) : null}
+
+            {narrative ? (
+              <div className="mt-5">
+                <p className="display text-2xl">{narrative.headline}</p>
+                <p className="mt-3 text-[1.02rem] leading-relaxed text-[var(--ink)]">
+                  {narrative.summary}
+                </p>
+                <div className="mt-6 grid gap-6 sm:grid-cols-3">
+                  {[
+                    { title: "Rewards", items: narrative.lovesList },
+                    { title: "Rejects", items: narrative.avoidsList },
+                    { title: "Blind spots", items: narrative.blindSpots },
+                  ].map((col) =>
+                    col.items.length ? (
+                      <div key={col.title}>
+                        <p className="text-xs uppercase tracking-[0.16em] text-[var(--ink-soft)]">
+                          {col.title}
+                        </p>
+                        <ul className="mt-2 space-y-1.5">
+                          {col.items.map((item) => (
+                            <li
+                              key={item}
+                              className="border-l-2 border-[var(--line)] pl-3 text-sm leading-snug"
+                            >
+                              {item}
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    ) : null,
+                  )}
+                </div>
+              </div>
+            ) : !readError ? (
+              <p className="mt-3 text-sm text-[var(--ink-soft)]">
+                Have Claude read your full history and describe the through-line
+                — what you reward, what you reject, and where the gaps are.
+              </p>
+            ) : null}
+          </section>
 
           <div className="mt-12 grid gap-12 md:grid-cols-2">
             <TasteBars title="Genres" items={profile.topGenres} />

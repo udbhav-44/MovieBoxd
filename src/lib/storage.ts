@@ -6,7 +6,11 @@ const DATA_DIR = path.join(process.cwd(), "data");
 const STORE_PATH = path.join(DATA_DIR, "store.json");
 
 const DEFAULT_STORE: AppStore = {
-  settings: { tmdbApiKey: "" },
+  settings: {
+    tmdbApiKey: "",
+    anthropicApiKey: "",
+    claudeModel: "claude-haiku-4-5",
+  },
   movies: [],
 };
 
@@ -27,6 +31,8 @@ export async function readStore(): Promise<AppStore> {
     return {
       settings: {
         tmdbApiKey: parsed.settings?.tmdbApiKey ?? "",
+        anthropicApiKey: parsed.settings?.anthropicApiKey ?? "",
+        claudeModel: parsed.settings?.claudeModel ?? "claude-haiku-4-5",
       },
       movies: Array.isArray(parsed.movies) ? parsed.movies : [],
     };

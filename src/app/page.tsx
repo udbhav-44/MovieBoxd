@@ -3,13 +3,18 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { RecommendationCard } from "@/components/RecommendationCard";
-import type { Recommendation } from "@/lib/types";
+import type { Recommendation, RecommendationEngine } from "@/lib/types";
 
 type LoadState =
   | { status: "loading" }
   | { status: "error"; error: string }
   | { status: "empty"; message: string }
-  | { status: "ready"; recs: Recommendation[] };
+  | {
+      status: "ready";
+      recs: Recommendation[];
+      engine: RecommendationEngine;
+      engineNote?: string;
+    };
 
 export default function ForYouPage() {
   const [state, setState] = useState<LoadState>({ status: "loading" });
@@ -35,7 +40,12 @@ export default function ForYouPage() {
           });
           return;
         }
-        setState({ status: "ready", recs });
+        setState({
+          status: "ready",
+          recs,
+          engine: (data.engine ?? "heuristic") as RecommendationEngine,
+          engineNote: data.engineNote,
+        });
       } catch (err) {
         if (!cancelled) {
           setState({
@@ -58,30 +68,33 @@ export default function ForYouPage() {
         <p className="text-xs uppercase tracking-[0.22em] text-[var(--accent)]">
           Tonight&apos;s cut
         </p>
-        <h1 className="display mt-3 text-5xl leading-[0.95] sm:text-6xl">
-          For You
-        </h1>
-        <p className="mt-4 max-w-xl text-base leading-relaxed text-[var(--ink-soft)]">
-          Recommendations shaped by the stories, genres, themes, actors, and
-          ratings in your archive. Watched titles stay out unless you mark them
+        <h1 className="display mt-3 text-4xl sm:text-5xl">For You</h1>
+        <p className="mt-5 max-w-xl text-[1.05rem] leading-relaxed text-[var(--ink-soft)]">
+          Candidates retrieved from TMDB, then ranked by Claude against your
+          full watch history. Watched titles stay out unless you mark them
           rewatchable.
         </p>
       </section>
 
       <div className="mt-10">
         {state.status === "loading" ? (
-          <div className="stagger space-y-8">
-            {Array.from({ length: 3 }).map((_, i) => (
-              <div key={i} className="grid grid-cols-[104px_1fr] gap-4">
-                <div className="skeleton aspect-[2/3]" />
-                <div className="space-y-3 py-2">
-                  <div className="skeleton h-7 w-1/2" />
-                  <div className="skeleton h-3 w-1/3" />
-                  <div className="skeleton h-16 w-full" />
+          <>
+            <p className="mb-6 text-sm text-[var(--ink-soft)]">
+              Reading your archive and consulting Claude…
+            </p>
+            <div className="stagger space-y-8">
+              {Array.from({ length: 3 }).map((_, i) => (
+                <div key={i} className="grid grid-cols-[104px_1fr] gap-4">
+                  <div className="skeleton aspect-[2/3]" />
+                  <div className="space-y-3 py-2">
+                    <div className="skeleton h-7 w-1/2" />
+                    <div className="skeleton h-3 w-1/3" />
+                    <div className="skeleton h-16 w-full" />
+                  </div>
                 </div>
-              </div>
-            ))}
-          </div>
+              ))}
+            </div>
+          </>
         ) : state.status === "error" ? (
           <div className="max-w-xl border border-[var(--line)] bg-[var(--bg-elevated)] p-6">
             <p className="display text-2xl">Needs a little setup</p>
@@ -125,11 +138,33 @@ export default function ForYouPage() {
             </div>
           </div>
         ) : (
-          <div className="stagger space-y-10">
-            {state.recs.map((rec) => (
-              <RecommendationCard key={rec.tmdbId} rec={rec} />
-            ))}
-          </div>
+          <>
+            <div className="mb-8 flex flex-wrap items-center gap-3 border-b border-[var(--line)] pb-4 text-xs uppercase tracking-[0.16em]">
+              <span
+                style={{
+                  color:
+                    state.engine === "claude"
+                      ? "var(--forest)"
+                      : "var(--ink-soft)",
+                }}
+              >
+                {state.engine === "claude"
+                  ? "Ranked by Claude"
+                  : "Heuristic ranking"}
+              </span>
+              {state.engineNote ? (
+                <span className="normal-case tracking-normal text-[var(--ink-soft)]">
+                  {state.engineNote}
+                </span>
+              ) : null}
+            </div>
+
+            <div className="stagger space-y-10">
+              {state.recs.map((rec, i) => (
+                <RecommendationCard key={rec.tmdbId} rec={rec} rank={i + 1} />
+              ))}
+            </div>
+          </>
         )}
       </div>
     </div>

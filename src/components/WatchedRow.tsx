@@ -49,7 +49,7 @@ export function WatchedRow({
       <Poster path={movie.posterPath} title={movie.title} />
       <div className="min-w-0">
         <div className="flex flex-wrap items-baseline gap-x-2">
-          <h3 className="display text-xl leading-none">{movie.title}</h3>
+          <h3 className="display text-xl leading-snug">{movie.title}</h3>
           {movie.year ? (
             <span className="text-sm text-[var(--ink-soft)]">{movie.year}</span>
           ) : null}

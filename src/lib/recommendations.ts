@@ -1,4 +1,6 @@
-import { buildTasteProfile, exclusionTmdbIds } from "./preference";
+import { rankWithClaude } from "./claude-ranker";
+import { buildTasteDossier } from "./dossier";
+import { exclusionTmdbIds } from "./preference";
 import {
   discoverMovies,
   getGenreMap,
@@ -7,7 +9,9 @@ import {
   yearFromDate,
 } from "./tmdb";
 import type {
+  AppSettings,
   Recommendation,
+  RecommendationEngine,
   TasteProfile,
   TmdbMovieSummary,
   WatchedMovie,
@@ -34,6 +38,9 @@ const GENRE_NAME_TO_HINT: Record<string, string> = {
   Western: "frontier myth",
 };
 
+/** Size of the pool handed to Claude for re-ranking. */
+const SHORTLIST_SIZE = 45;
+
 function uniqueById(movies: TmdbMovieSummary[]): TmdbMovieSummary[] {
   const seen = new Set<number>();
   const out: TmdbMovieSummary[] = [];
@@ -51,7 +58,8 @@ function scoreCandidate(
   profile: TasteProfile,
   seedTitles: string[],
 ): { score: number; reasons: string[] } {
-  let score = (movie.vote_average ?? 0) * 0.35 + Math.min(movie.popularity ?? 0, 80) * 0.02;
+  let score =
+    (movie.vote_average ?? 0) * 0.35 + Math.min(movie.popularity ?? 0, 80) * 0.02;
   const reasons: string[] = [];
 
   const genreScores = new Map(profile.topGenres.map((g) => [g.name, g.score]));
@@ -104,94 +112,12 @@ function scoreCandidate(
   return { score, reasons: reasons.slice(0, 3) };
 }
 
-export async function generateRecommendations(
+async function enrichReasons(
   apiKey: string,
-  movies: WatchedMovie[],
-  limit = 12,
-): Promise<{ recommendations: Recommendation[]; profile: TasteProfile }> {
-  const profile = buildTasteProfile(movies);
-  const excluded = exclusionTmdbIds(movies);
-
-  if (!movies.length) {
-    return { recommendations: [], profile };
-  }
-
-  const genreMap = await getGenreMap(apiKey);
-  const reverseGenre = new Map(
-    [...genreMap.entries()].map(([id, name]) => [name, id]),
-  );
-
-  const topGenreIds = profile.topGenres
-    .map((g) => reverseGenre.get(g.name))
-    .filter((id): id is number => id != null)
-    .slice(0, 3);
-
-  const seeds = [...movies]
-    .filter((m) => m.tmdbId && (m.rating == null || m.rating >= 3.5))
-    .sort((a, b) => (b.rating ?? 0) - (a.rating ?? 0))
-    .slice(0, 5);
-
-  const pools: TmdbMovieSummary[] = [];
-
-  if (topGenreIds.length) {
-    pools.push(
-      ...(await discoverMovies(apiKey, {
-        withGenres: topGenreIds.slice(0, 2).join(","),
-        sortBy: "vote_average.desc",
-        voteCountGte: 200,
-      })),
-    );
-    pools.push(
-      ...(await discoverMovies(apiKey, {
-        withGenres: topGenreIds.join("|"),
-        sortBy: "popularity.desc",
-        voteCountGte: 120,
-      })),
-    );
-  }
-
-  for (const seed of seeds.slice(0, 3)) {
-    if (!seed.tmdbId) continue;
-    try {
-      pools.push(...(await getSimilarMovies(apiKey, seed.tmdbId)));
-    } catch {
-      // ignore individual seed failures
-    }
-  }
-
-  const candidates = uniqueById(pools).filter((m) => !excluded.has(m.id));
-  const seedTitles = seeds.map((s) => s.title);
-
-  const scored: Recommendation[] = candidates.map((movie) => {
-    const genreNames = (movie.genre_ids ?? [])
-      .map((id) => genreMap.get(id))
-      .filter((n): n is string => Boolean(n));
-    const { score, reasons } = scoreCandidate(
-      movie,
-      genreNames,
-      profile,
-      seedTitles,
-    );
-
-    return {
-      tmdbId: movie.id,
-      title: movie.title,
-      year: yearFromDate(movie.release_date),
-      posterPath: movie.poster_path ?? null,
-      backdropPath: movie.backdrop_path ?? null,
-      overview: movie.overview ?? "",
-      genres: genreNames,
-      voteAverage: movie.vote_average ?? 0,
-      score,
-      reasons,
-    };
-  });
-
-  scored.sort((a, b) => b.score - a.score);
-
-  // Enrich top results with keywords/credits for sharper reasons
-  const top = scored.slice(0, limit);
-  for (const rec of top.slice(0, 6)) {
+  recs: Recommendation[],
+  profile: TasteProfile,
+): Promise<void> {
+  for (const rec of recs) {
     try {
       const details = await getMovieDetails(apiKey, rec.tmdbId);
       const keywords = (details.keywords?.keywords ?? []).map((k) => k.name);
@@ -241,8 +167,172 @@ export async function generateRecommendations(
       // keep base recommendation
     }
   }
+}
 
+/**
+ * Retrieval is heuristic and TMDB-driven; ranking is Claude's when a key is
+ * configured, otherwise the heuristic score stands in.
+ */
+export async function generateRecommendations(
+  settings: AppSettings,
+  movies: WatchedMovie[],
+  limit = 12,
+): Promise<{
+  recommendations: Recommendation[];
+  profile: TasteProfile;
+  engine: RecommendationEngine;
+  engineNote?: string;
+}> {
+  const apiKey = settings.tmdbApiKey;
+  const { dossier, profile } = buildTasteDossier(movies);
+  const excluded = exclusionTmdbIds(movies);
+
+  if (!movies.length) {
+    return { recommendations: [], profile, engine: "heuristic" };
+  }
+
+  const genreMap = await getGenreMap(apiKey);
+  const reverseGenre = new Map(
+    [...genreMap.entries()].map(([id, name]) => [name, id]),
+  );
+
+  const topGenreIds = profile.topGenres
+    .map((g) => reverseGenre.get(g.name))
+    .filter((id): id is number => id != null)
+    .slice(0, 4);
+
+  const seeds = [...movies]
+    .filter((m) => m.tmdbId && (m.rating == null || m.rating >= 3.5))
+    .sort((a, b) => (b.rating ?? 0) - (a.rating ?? 0))
+    .slice(0, 8);
+
+  const pools: TmdbMovieSummary[] = [];
+
+  if (topGenreIds.length) {
+    pools.push(
+      ...(await discoverMovies(apiKey, {
+        withGenres: topGenreIds.slice(0, 2).join(","),
+        sortBy: "vote_average.desc",
+        voteCountGte: 200,
+      })),
+      ...(await discoverMovies(apiKey, {
+        withGenres: topGenreIds.join("|"),
+        sortBy: "popularity.desc",
+        voteCountGte: 120,
+      })),
+      ...(await discoverMovies(apiKey, {
+        withGenres: topGenreIds.join("|"),
+        sortBy: "vote_average.desc",
+        voteCountGte: 400,
+        page: 2,
+      })),
+    );
+  }
+
+  for (const seed of seeds.slice(0, 5)) {
+    if (!seed.tmdbId) continue;
+    try {
+      pools.push(...(await getSimilarMovies(apiKey, seed.tmdbId)));
+    } catch {
+      // ignore individual seed failures
+    }
+  }
+
+  const candidates = uniqueById(pools).filter((m) => !excluded.has(m.id));
+  const seedTitles = seeds.map((s) => s.title);
+
+  const scored: Recommendation[] = candidates.map((movie) => {
+    const genreNames = (movie.genre_ids ?? [])
+      .map((id) => genreMap.get(id))
+      .filter((n): n is string => Boolean(n));
+    const { score, reasons } = scoreCandidate(
+      movie,
+      genreNames,
+      profile,
+      seedTitles,
+    );
+
+    return {
+      tmdbId: movie.id,
+      title: movie.title,
+      year: yearFromDate(movie.release_date),
+      posterPath: movie.poster_path ?? null,
+      backdropPath: movie.backdrop_path ?? null,
+      overview: movie.overview ?? "",
+      genres: genreNames,
+      voteAverage: movie.vote_average ?? 0,
+      score,
+      reasons,
+      engine: "heuristic" as RecommendationEngine,
+    };
+  });
+
+  scored.sort((a, b) => b.score - a.score);
+
+  if (settings.anthropicApiKey.trim()) {
+    const shortlist = scored.slice(0, SHORTLIST_SIZE);
+    try {
+      const ranked = await rankWithClaude({
+        apiKey: settings.anthropicApiKey,
+        model: settings.claudeModel,
+        dossier,
+        candidates: shortlist,
+        limit,
+      });
+
+      if (ranked.length) {
+        await enrichGenres(apiKey, ranked);
+        return { recommendations: ranked, profile, engine: "claude" };
+      }
+    } catch (error) {
+      const note =
+        error instanceof Error
+          ? `Claude ranking unavailable (${error.message}). Showing heuristic picks.`
+          : "Claude ranking unavailable. Showing heuristic picks.";
+      const fallback = scored.slice(0, limit);
+      await enrichReasons(apiKey, fallback.slice(0, 6), profile);
+      fallback.sort((a, b) => b.score - a.score);
+      return {
+        recommendations: fallback,
+        profile,
+        engine: "heuristic",
+        engineNote: note,
+      };
+    }
+  }
+
+  const top = scored.slice(0, limit);
+  await enrichReasons(apiKey, top.slice(0, 6), profile);
   top.sort((a, b) => b.score - a.score);
 
-  return { recommendations: top, profile };
+  return {
+    recommendations: top,
+    profile,
+    engine: "heuristic",
+    engineNote: settings.anthropicApiKey.trim()
+      ? undefined
+      : "Add an Anthropic API key in Settings for Claude-ranked picks.",
+  };
+}
+
+/** Discover results carry genre ids only; details give display-ready names. */
+async function enrichGenres(
+  apiKey: string,
+  recs: Recommendation[],
+): Promise<void> {
+  await Promise.all(
+    recs.slice(0, 8).map(async (rec) => {
+      try {
+        const details = await getMovieDetails(apiKey, rec.tmdbId);
+        if (details.genres?.length) {
+          rec.genres = details.genres.map((g) => g.name);
+        }
+        if (details.runtime) {
+          rec.overview = rec.overview || details.overview || "";
+        }
+      } catch {
+        // keep existing metadata
+      }
+    }),
+  );
 }

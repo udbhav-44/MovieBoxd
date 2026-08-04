@@ -5,6 +5,7 @@ import { generateRecommendations } from "@/lib/recommendations";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+export const maxDuration = 120;
 
 export async function GET() {
   try {
@@ -25,13 +26,15 @@ export async function GET() {
       });
     }
 
-    const { recommendations, profile } = await generateRecommendations(
-      settings.tmdbApiKey,
-      movies,
-      12,
-    );
+    const { recommendations, profile, engine, engineNote } =
+      await generateRecommendations(settings, movies, 12);
 
-    return NextResponse.json({ recommendations, profile });
+    return NextResponse.json({
+      recommendations,
+      profile,
+      engine,
+      engineNote,
+    });
   } catch (error) {
     const { error: message, status } = errorResponse(error);
     return NextResponse.json({ error: message }, { status });
