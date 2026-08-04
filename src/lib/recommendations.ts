@@ -39,8 +39,12 @@ const GENRE_NAME_TO_HINT: Record<string, string> = {
   Western: "frontier myth",
 };
 
-/** Size of the pool handed to Claude for re-ranking. */
-const SHORTLIST_SIZE = 45;
+/**
+ * Size of the pool handed to Claude for re-ranking. Every candidate costs
+ * input tokens and latency, and past ~30 the extra options rarely change
+ * the top 12.
+ */
+const SHORTLIST_SIZE = 30;
 
 function uniqueById(movies: TmdbMovieSummary[]): TmdbMovieSummary[] {
   const seen = new Set<number>();
@@ -118,7 +122,17 @@ async function enrichReasons(
   recs: Recommendation[],
   profile: TasteProfile,
 ): Promise<void> {
-  for (const rec of recs) {
+  // Detail lookups are independent, so waiting on them one by one was
+  // adding a full round-trip per film to every request.
+  await Promise.all(recs.map((rec) => enrichOne(apiKey, rec, profile)));
+}
+
+async function enrichOne(
+  apiKey: string,
+  rec: Recommendation,
+  profile: TasteProfile,
+): Promise<void> {
+  {
     try {
       const details = await getMovieDetails(apiKey, rec.tmdbId);
       const keywords = (details.keywords?.keywords ?? []).map((k) => k.name);
@@ -174,23 +188,31 @@ async function enrichReasons(
  * Retrieval is heuristic and TMDB-driven; ranking is Claude's when a key is
  * configured, otherwise the heuristic score stands in.
  */
-export async function generateRecommendations(
-  settings: AppSettings,
-  movies: WatchedMovie[],
-  options: RecommendationOptions & { dismissed?: number[] } = {},
-): Promise<{
+export interface RecommendationResult {
   recommendations: Recommendation[];
   profile: TasteProfile;
   engine: RecommendationEngine;
   engineNote?: string;
   exhausted?: boolean;
-}> {
+  /** True when a better-ranked list is still on its way. */
+  refining?: boolean;
+}
+
+export async function generateRecommendations(
+  settings: AppSettings,
+  movies: WatchedMovie[],
+  options: RecommendationOptions & {
+    dismissed?: number[];
+    onPartial?: (partial: RecommendationResult) => void;
+  } = {},
+): Promise<RecommendationResult> {
   const {
     limit = 12,
     genreIds = [],
     refresh = 0,
     exclude = [],
     dismissed = [],
+    onPartial,
   } = options;
 
   const apiKey = settings.tmdbApiKey;
@@ -202,6 +224,23 @@ export async function generateRecommendations(
   if (!movies.length) {
     return { recommendations: [], profile, engine: "heuristic" };
   }
+
+  const seeds = [...movies]
+    .filter((m) => m.tmdbId && (m.rating == null || m.rating >= 3.5))
+    .sort((a, b) => (b.rating ?? 0) - (a.rating ?? 0))
+    .slice(0, 12);
+
+  // Each refresh walks further into the catalogue instead of re-serving page 1.
+  const pageOffset = refresh * 2;
+
+  // Seeds rotate with refresh so similar-film pulls differ run to run. These
+  // don't depend on the genre map, so start them before awaiting it.
+  const seedStart = (refresh * 3) % Math.max(1, seeds.length);
+  const rotatedSeeds = [...seeds.slice(seedStart), ...seeds.slice(0, seedStart)];
+  const seedCalls = rotatedSeeds
+    .slice(0, 5)
+    .filter((s) => s.tmdbId)
+    .map((s) => getSimilarMovies(apiKey, s.tmdbId as number));
 
   const genreMap = await getGenreMap(apiKey);
   const reverseGenre = new Map(
@@ -220,59 +259,44 @@ export async function generateRecommendations(
     .map((id) => genreMap.get(id))
     .filter((n): n is string => Boolean(n));
 
-  const seeds = [...movies]
-    .filter((m) => m.tmdbId && (m.rating == null || m.rating >= 3.5))
-    .sort((a, b) => (b.rating ?? 0) - (a.rating ?? 0))
-    .slice(0, 12);
-
-  const pools: TmdbMovieSummary[] = [];
-  // Each refresh walks further into the catalogue instead of re-serving page 1.
-  const pageOffset = refresh * 2;
-
+  const discoverCalls: Promise<TmdbMovieSummary[]>[] = [];
   if (retrievalGenreIds.length) {
     const joined = retrievalGenreIds.join(filtering ? "," : "|");
-    pools.push(
-      ...(await discoverMovies(apiKey, {
+    discoverCalls.push(
+      discoverMovies(apiKey, {
         withGenres: joined,
         sortBy: "vote_average.desc",
         // A genre pick should surface the genre's best, not its most popular.
         voteCountGte: filtering ? 300 : 200,
         voteAverageGte: filtering ? 7 : undefined,
         page: 1 + pageOffset,
-      })),
-      ...(await discoverMovies(apiKey, {
+      }),
+      discoverMovies(apiKey, {
         withGenres: joined,
         sortBy: filtering ? "vote_average.desc" : "popularity.desc",
         voteCountGte: filtering ? 150 : 120,
         voteAverageGte: filtering ? 6.5 : undefined,
         page: 2 + pageOffset,
-      })),
+      }),
     );
 
     if (!filtering) {
-      pools.push(
-        ...(await discoverMovies(apiKey, {
+      discoverCalls.push(
+        discoverMovies(apiKey, {
           withGenres: joined,
           sortBy: "vote_average.desc",
           voteCountGte: 400,
           page: 3 + pageOffset,
-        })),
+        }),
       );
     }
   }
 
-  // Seeds rotate with refresh so similar-film pulls differ run to run.
-  const seedStart = (refresh * 3) % Math.max(1, seeds.length);
-  const rotatedSeeds = [...seeds.slice(seedStart), ...seeds.slice(0, seedStart)];
-
-  for (const seed of rotatedSeeds.slice(0, 5)) {
-    if (!seed.tmdbId) continue;
-    try {
-      pools.push(...(await getSimilarMovies(apiKey, seed.tmdbId)));
-    } catch {
-      // ignore individual seed failures
-    }
-  }
+  // One wave instead of nine serial round-trips.
+  const settled = await Promise.allSettled([...discoverCalls, ...seedCalls]);
+  const pools = settled.flatMap((r) =>
+    r.status === "fulfilled" ? r.value : [],
+  );
 
   let candidates = uniqueById(pools).filter((m) => !excluded.has(m.id));
 
@@ -327,51 +351,61 @@ export async function generateRecommendations(
 
   scored.sort((a, b) => b.score - a.score);
 
-  if (settings.anthropicApiKey.trim()) {
-    const shortlist = scored.slice(0, SHORTLIST_SIZE);
-    try {
-      const ranked = await rankWithClaude({
-        apiKey: settings.anthropicApiKey,
-        model: settings.claudeModel,
-        dossier,
-        candidates: shortlist,
-        limit,
-        genreFocus: genreNamesPicked,
-      });
+  const useClaude = Boolean(settings.anthropicApiKey.trim());
 
-      if (ranked.length) {
-        await enrichGenres(apiKey, ranked);
-        return { recommendations: ranked, profile, engine: "claude" };
-      }
-    } catch (error) {
-      const note =
-        error instanceof Error
-          ? `Claude ranking unavailable (${error.message}). Showing heuristic picks.`
-          : "Claude ranking unavailable. Showing heuristic picks.";
-      const fallback = scored.slice(0, limit);
-      await enrichReasons(apiKey, fallback.slice(0, 6), profile);
-      fallback.sort((a, b) => b.score - a.score);
-      return {
-        recommendations: fallback,
-        profile,
-        engine: "heuristic",
-        engineNote: note,
-      };
-    }
-  }
-
+  // Emit the heuristic list first so something is on screen in about a second,
+  // then let Claude's ranking replace it when it lands.
   const top = scored.slice(0, limit);
   await enrichReasons(apiKey, top.slice(0, 6), profile);
   top.sort((a, b) => b.score - a.score);
 
-  return {
+  onPartial?.({
     recommendations: top,
     profile,
     engine: "heuristic",
-    engineNote: settings.anthropicApiKey.trim()
+    engineNote: useClaude
       ? undefined
       : "Add an Anthropic API key in Settings for Claude-ranked picks.",
-  };
+    refining: useClaude,
+  });
+
+  if (!useClaude) {
+    return {
+      recommendations: top,
+      profile,
+      engine: "heuristic",
+      engineNote:
+        "Add an Anthropic API key in Settings for Claude-ranked picks.",
+    };
+  }
+
+  try {
+    const ranked = await rankWithClaude({
+      apiKey: settings.anthropicApiKey,
+      model: settings.claudeModel,
+      dossier,
+      candidates: scored.slice(0, SHORTLIST_SIZE),
+      limit,
+      genreFocus: genreNamesPicked,
+    });
+
+    if (ranked.length) {
+      await enrichGenres(apiKey, ranked);
+      return { recommendations: ranked, profile, engine: "claude" };
+    }
+  } catch (error) {
+    return {
+      recommendations: top,
+      profile,
+      engine: "heuristic",
+      engineNote:
+        error instanceof Error
+          ? `Claude ranking unavailable (${error.message}). Showing heuristic picks.`
+          : "Claude ranking unavailable. Showing heuristic picks.",
+    };
+  }
+
+  return { recommendations: top, profile, engine: "heuristic" };
 }
 
 /** Discover results carry genre ids only; details give display-ready names. */

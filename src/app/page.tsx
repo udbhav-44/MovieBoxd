@@ -18,6 +18,7 @@ type LoadState =
       recs: Recommendation[];
       engine: RecommendationEngine;
       engineNote?: string;
+      refining?: boolean;
     };
 
 export default function ForYouPage() {
@@ -48,11 +49,35 @@ export default function ForYouPage() {
   }, []);
 
   const fetchRecs = useCallback(
-    async (opts: {
-      genreIds: number[];
-      refreshCount: number;
-      exclude: number[];
-    }): Promise<LoadState> => {
+    async (
+      opts: {
+        genreIds: number[];
+        refreshCount: number;
+        exclude: number[];
+      },
+      /** Fires with the fast heuristic pass before Claude's ranking lands. */
+      onPartial?: (partial: LoadState) => void,
+    ): Promise<LoadState> => {
+      const toState = (data: Record<string, unknown>): LoadState => {
+        const recs = (data.recommendations ?? []) as Recommendation[];
+        if (!recs.length) {
+          return {
+            status: "empty",
+            message:
+              (data.engineNote as string) ||
+              (data.message as string) ||
+              "Import or add watched films to unlock For You.",
+          };
+        }
+        return {
+          status: "ready",
+          recs,
+          engine: (data.engine ?? "heuristic") as RecommendationEngine,
+          engineNote: data.engineNote as string | undefined,
+          refining: Boolean(data.refining),
+        };
+      };
+
       try {
         const params = new URLSearchParams();
         if (opts.genreIds.length) params.set("genres", opts.genreIds.join(","));
@@ -60,28 +85,49 @@ export default function ForYouPage() {
         if (opts.exclude.length) params.set("exclude", opts.exclude.join(","));
 
         const res = await fetch(`/api/recommendations?${params}`);
-        const data = await res.json();
-        if (!res.ok) {
+
+        // Setup problems come back as plain JSON rather than a stream.
+        if (!res.ok || !res.body) {
+          const data = await res.json().catch(() => ({}));
           throw new Error(data.error || "Could not load recommendations");
         }
-
-        const recs = (data.recommendations ?? []) as Recommendation[];
-        if (!recs.length) {
-          return {
-            status: "empty",
-            message:
-              data.engineNote ||
-              data.message ||
-              "Import or add watched films to unlock For You.",
-          };
+        const contentType = res.headers.get("content-type") ?? "";
+        if (!contentType.includes("ndjson")) {
+          return toState(await res.json());
         }
 
-        return {
-          status: "ready",
-          recs,
-          engine: (data.engine ?? "heuristic") as RecommendationEngine,
-          engineNote: data.engineNote,
-        };
+        const reader = res.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = "";
+        let last: LoadState | null = null;
+
+        for (;;) {
+          const { value, done } = await reader.read();
+          if (done) break;
+          buffer += decoder.decode(value, { stream: true });
+
+          const lines = buffer.split("\n");
+          buffer = lines.pop() ?? "";
+
+          for (const line of lines) {
+            if (!line.trim()) continue;
+            const event = JSON.parse(line);
+            if (event.type === "error") throw new Error(event.error);
+            const next = toState(event);
+            if (event.type === "partial") {
+              onPartial?.(next);
+            } else {
+              last = next;
+            }
+          }
+        }
+
+        return (
+          last ?? {
+            status: "error",
+            error: "Recommendation stream ended unexpectedly",
+          }
+        );
       } catch (err) {
         return {
           status: "error",
@@ -105,11 +151,12 @@ export default function ForYouPage() {
   useEffect(() => {
     let cancelled = false;
     void (async () => {
-      const next = await fetchRecs({
-        genreIds: [],
-        refreshCount: 0,
-        exclude: [],
-      });
+      const next = await fetchRecs(
+        { genreIds: [], refreshCount: 0, exclude: [] },
+        (partial) => {
+          if (!cancelled) apply(partial);
+        },
+      );
       if (!cancelled) apply(next);
     })();
     return () => {
@@ -120,7 +167,8 @@ export default function ForYouPage() {
   async function run(genreIds: number[], refreshCount: number, exclude: number[]) {
     setState({ status: "loading" });
     setWorking(true);
-    apply(await fetchRecs({ genreIds, refreshCount, exclude }));
+    const final = await fetchRecs({ genreIds, refreshCount, exclude }, apply);
+    apply(final);
   }
 
   function toggleGenre(id: number) {
@@ -324,8 +372,14 @@ export default function ForYouPage() {
               >
                 {state.engine === "claude"
                   ? "Ranked by Claude"
-                  : "Heuristic ranking"}
+                  : "Quick picks"}
               </span>
+              {state.refining ? (
+                <span className="inline-flex items-center gap-2 text-xs uppercase tracking-[0.16em] text-[var(--ink-soft)]">
+                  <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-[var(--accent)]" />
+                  Claude is re-ranking these
+                </span>
+              ) : null}
               {refresh > 0 ? (
                 <span className="text-xs uppercase tracking-[0.16em] text-[var(--ink-soft)]">
                   Batch {refresh + 1}
