@@ -48,7 +48,9 @@ Ranking a 45-film shortlist against a taste profile is a judgment-and-writing ta
 
 ## Letterboxd export tips
 
-From Letterboxd: **Settings → Import & Export → Export Your Data**. Use `diary.csv`, `ratings.csv`, or `watched.csv`. Import is capped at 250 rows per upload so TMDB enrichment stays responsive.
+From Letterboxd: **Settings → Import & Export → Export Your Data**. Use `diary.csv`, `ratings.csv`, or `watched.csv`.
+
+Each row is matched against TMDB and enriched with genres, cast, crew, and keywords, which costs two API calls per film. Those run 8 at a time and progress streams to the UI, so a 250-film export finishes in well under a minute. Titles TMDB can't match are still imported with your rating, review, and watch date intact. Up to 2,000 rows per upload.
 
 ## Scripts
 
