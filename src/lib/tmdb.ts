@@ -80,6 +80,7 @@ export async function discoverMovies(
     sortBy?: string;
     page?: number;
     voteCountGte?: number;
+    voteAverageGte?: number;
   } = {},
 ): Promise<TmdbMovieSummary[]> {
   const data = await tmdbFetch<{ results: TmdbMovieSummary[] }>(
@@ -94,6 +95,7 @@ export async function discoverMovies(
       with_people: options.withPeople,
       page: options.page ?? 1,
       "vote_count.gte": options.voteCountGte ?? 80,
+      "vote_average.gte": options.voteAverageGte,
     },
   );
   return data.results ?? [];

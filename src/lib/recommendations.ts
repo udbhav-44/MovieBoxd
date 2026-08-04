@@ -12,6 +12,7 @@ import type {
   AppSettings,
   Recommendation,
   RecommendationEngine,
+  RecommendationOptions,
   TasteProfile,
   TmdbMovieSummary,
   WatchedMovie,
@@ -176,16 +177,27 @@ async function enrichReasons(
 export async function generateRecommendations(
   settings: AppSettings,
   movies: WatchedMovie[],
-  limit = 12,
+  options: RecommendationOptions & { dismissed?: number[] } = {},
 ): Promise<{
   recommendations: Recommendation[];
   profile: TasteProfile;
   engine: RecommendationEngine;
   engineNote?: string;
+  exhausted?: boolean;
 }> {
+  const {
+    limit = 12,
+    genreIds = [],
+    refresh = 0,
+    exclude = [],
+    dismissed = [],
+  } = options;
+
   const apiKey = settings.tmdbApiKey;
   const { dossier, profile } = buildTasteDossier(movies);
   const excluded = exclusionTmdbIds(movies);
+  for (const id of dismissed) excluded.add(id);
+  for (const id of exclude) excluded.add(id);
 
   if (!movies.length) {
     return { recommendations: [], profile, engine: "heuristic" };
@@ -196,40 +208,64 @@ export async function generateRecommendations(
     [...genreMap.entries()].map(([id, name]) => [name, id]),
   );
 
-  const topGenreIds = profile.topGenres
+  const tasteGenreIds = profile.topGenres
     .map((g) => reverseGenre.get(g.name))
     .filter((id): id is number => id != null)
     .slice(0, 4);
 
+  // An explicit genre pick narrows retrieval; taste still does the ranking.
+  const filtering = genreIds.length > 0;
+  const retrievalGenreIds = filtering ? genreIds : tasteGenreIds;
+  const genreNamesPicked = genreIds
+    .map((id) => genreMap.get(id))
+    .filter((n): n is string => Boolean(n));
+
   const seeds = [...movies]
     .filter((m) => m.tmdbId && (m.rating == null || m.rating >= 3.5))
     .sort((a, b) => (b.rating ?? 0) - (a.rating ?? 0))
-    .slice(0, 8);
+    .slice(0, 12);
 
   const pools: TmdbMovieSummary[] = [];
+  // Each refresh walks further into the catalogue instead of re-serving page 1.
+  const pageOffset = refresh * 2;
 
-  if (topGenreIds.length) {
+  if (retrievalGenreIds.length) {
+    const joined = retrievalGenreIds.join(filtering ? "," : "|");
     pools.push(
       ...(await discoverMovies(apiKey, {
-        withGenres: topGenreIds.slice(0, 2).join(","),
+        withGenres: joined,
         sortBy: "vote_average.desc",
-        voteCountGte: 200,
+        // A genre pick should surface the genre's best, not its most popular.
+        voteCountGte: filtering ? 300 : 200,
+        voteAverageGte: filtering ? 7 : undefined,
+        page: 1 + pageOffset,
       })),
       ...(await discoverMovies(apiKey, {
-        withGenres: topGenreIds.join("|"),
-        sortBy: "popularity.desc",
-        voteCountGte: 120,
-      })),
-      ...(await discoverMovies(apiKey, {
-        withGenres: topGenreIds.join("|"),
-        sortBy: "vote_average.desc",
-        voteCountGte: 400,
-        page: 2,
+        withGenres: joined,
+        sortBy: filtering ? "vote_average.desc" : "popularity.desc",
+        voteCountGte: filtering ? 150 : 120,
+        voteAverageGte: filtering ? 6.5 : undefined,
+        page: 2 + pageOffset,
       })),
     );
+
+    if (!filtering) {
+      pools.push(
+        ...(await discoverMovies(apiKey, {
+          withGenres: joined,
+          sortBy: "vote_average.desc",
+          voteCountGte: 400,
+          page: 3 + pageOffset,
+        })),
+      );
+    }
   }
 
-  for (const seed of seeds.slice(0, 5)) {
+  // Seeds rotate with refresh so similar-film pulls differ run to run.
+  const seedStart = (refresh * 3) % Math.max(1, seeds.length);
+  const rotatedSeeds = [...seeds.slice(seedStart), ...seeds.slice(0, seedStart)];
+
+  for (const seed of rotatedSeeds.slice(0, 5)) {
     if (!seed.tmdbId) continue;
     try {
       pools.push(...(await getSimilarMovies(apiKey, seed.tmdbId)));
@@ -238,7 +274,29 @@ export async function generateRecommendations(
     }
   }
 
-  const candidates = uniqueById(pools).filter((m) => !excluded.has(m.id));
+  let candidates = uniqueById(pools).filter((m) => !excluded.has(m.id));
+
+  if (filtering) {
+    const wanted = new Set(genreIds);
+    const inGenre = candidates.filter((m) =>
+      (m.genre_ids ?? []).some((id) => wanted.has(id)),
+    );
+    // Similar-film pulls ignore the filter, so only keep them if nothing else matched.
+    if (inGenre.length >= limit) candidates = inGenre;
+  }
+
+  if (!candidates.length) {
+    return {
+      recommendations: [],
+      profile,
+      engine: "heuristic",
+      exhausted: true,
+      engineNote: filtering
+        ? `No more ${genreNamesPicked.join(" / ")} picks left that you haven't seen or dismissed.`
+        : "You've worked through the current pool. Try a genre filter or add more watched films.",
+    };
+  }
+
   const seedTitles = seeds.map((s) => s.title);
 
   const scored: Recommendation[] = candidates.map((movie) => {
@@ -278,6 +336,7 @@ export async function generateRecommendations(
         dossier,
         candidates: shortlist,
         limit,
+        genreFocus: genreNamesPicked,
       });
 
       if (ranked.length) {

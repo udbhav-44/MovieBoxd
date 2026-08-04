@@ -36,6 +36,23 @@ export interface AppSettings {
 export interface AppStore {
   settings: AppSettings;
   movies: WatchedMovie[];
+  /** TMDB ids the user explicitly rejected; never recommended again. */
+  dismissed: number[];
+}
+
+export interface Genre {
+  id: number;
+  name: string;
+}
+
+export interface RecommendationOptions {
+  limit?: number;
+  /** TMDB genre ids to bias retrieval toward. Empty means follow taste alone. */
+  genreIds?: number[];
+  /** Bumped by the refresh control to walk deeper into the candidate pool. */
+  refresh?: number;
+  /** TMDB ids already on screen, so a refresh returns different films. */
+  exclude?: number[];
 }
 
 export interface TasteBucket {
