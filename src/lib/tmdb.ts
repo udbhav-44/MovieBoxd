@@ -2,7 +2,8 @@ import type { TmdbMovieDetails, TmdbMovieSummary } from "./types";
 
 export { posterUrl, backdropUrl } from "./images";
 
-const TMDB_BASE = "https://api.themoviedb.org/3";
+/** Overridable so the import pipeline can be exercised against a local stub. */
+const TMDB_BASE = process.env.TMDB_API_BASE ?? "https://api.themoviedb.org/3";
 
 export class TmdbError extends Error {
   status: number;
@@ -11,6 +12,12 @@ export class TmdbError extends Error {
     this.name = "TmdbError";
     this.status = status;
   }
+}
+
+const MAX_RETRIES = 3;
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 async function tmdbFetch<T>(
@@ -30,20 +37,60 @@ async function tmdbFetch<T>(
     }
   }
 
-  const res = await fetch(url.toString(), {
-    headers: { Accept: "application/json" },
-    next: { revalidate: 0 },
-  });
+  let lastError: unknown;
 
-  if (!res.ok) {
-    const body = await res.text();
-    if (res.status === 401) {
-      throw new TmdbError("Invalid TMDB API key.", 401);
+  for (let attempt = 0; attempt <= MAX_RETRIES; attempt += 1) {
+    try {
+      const res = await fetch(url.toString(), {
+        headers: { Accept: "application/json" },
+        next: { revalidate: 0 },
+      });
+
+      if (res.ok) {
+        return (await res.json()) as T;
+      }
+
+      if (res.status === 401) {
+        throw new TmdbError("Invalid TMDB API key.", 401);
+      }
+
+      // Honour TMDB's throttling hint; otherwise back off exponentially.
+      if (res.status === 429 || res.status >= 500) {
+        if (attempt === MAX_RETRIES) {
+          throw new TmdbError(
+            `TMDB request failed after ${MAX_RETRIES} retries: ${res.statusText}`,
+            res.status,
+          );
+        }
+        const retryAfter = Number(res.headers.get("retry-after"));
+        await sleep(
+          Number.isFinite(retryAfter) && retryAfter > 0
+            ? retryAfter * 1000
+            : 2 ** attempt * 400,
+        );
+        continue;
+      }
+
+      const body = await res.text();
+      throw new TmdbError(
+        `TMDB request failed: ${body || res.statusText}`,
+        res.status,
+      );
+    } catch (error) {
+      // Auth and other 4xx failures are terminal; only transport errors retry.
+      if (error instanceof TmdbError) throw error;
+      lastError = error;
+      if (attempt === MAX_RETRIES) break;
+      await sleep(2 ** attempt * 400);
     }
-    throw new TmdbError(`TMDB request failed: ${body || res.statusText}`, res.status);
   }
 
-  return res.json() as Promise<T>;
+  throw new TmdbError(
+    lastError instanceof Error
+      ? `TMDB request failed: ${lastError.message}`
+      : "TMDB request failed",
+    502,
+  );
 }
 
 export async function searchMovies(
