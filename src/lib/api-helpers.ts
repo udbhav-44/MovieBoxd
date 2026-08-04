@@ -1,3 +1,4 @@
+import { ClaudeError } from "./claude";
 import { getSettings } from "./storage";
 import {
   extractMovieFields,
@@ -13,7 +14,7 @@ export async function getSettingsSafe() {
 }
 
 export function errorResponse(error: unknown, fallback = "Unexpected error") {
-  if (error instanceof TmdbError) {
+  if (error instanceof TmdbError || error instanceof ClaudeError) {
     return { error: error.message, status: error.status };
   }
   if (error instanceof Error) {

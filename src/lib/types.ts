@@ -22,8 +22,15 @@ export interface WatchedMovie {
   updatedAt: string;
 }
 
+export type ClaudeModel =
+  | "claude-sonnet-5"
+  | "claude-opus-5"
+  | "claude-haiku-4-5";
+
 export interface AppSettings {
   tmdbApiKey: string;
+  anthropicApiKey: string;
+  claudeModel: ClaudeModel;
 }
 
 export interface AppStore {
@@ -50,6 +57,8 @@ export interface TasteProfile {
   ratingDistribution: Record<string, number>;
 }
 
+export type RecommendationEngine = "claude" | "heuristic";
+
 export interface Recommendation {
   tmdbId: number;
   title: string;
@@ -61,6 +70,20 @@ export interface Recommendation {
   voteAverage: number;
   score: number;
   reasons: string[];
+  /** Claude-written pitch for why this lands with your taste. */
+  pitch?: string;
+  /** Claude's confidence that this is a hit, 0–100. */
+  confidence?: number;
+  /** Where the pick came from when the LLM ranker is unavailable. */
+  engine?: RecommendationEngine;
+}
+
+export interface TasteNarrative {
+  headline: string;
+  summary: string;
+  lovesList: string[];
+  avoidsList: string[];
+  blindSpots: string[];
 }
 
 export interface TmdbMovieSummary {
