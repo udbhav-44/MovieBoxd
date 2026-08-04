@@ -22,6 +22,11 @@ export default function AddPage() {
   const [review, setReview] = useState("");
   const [rewatchable, setRewatchable] = useState(false);
   const [importStatus, setImportStatus] = useState<string | null>(null);
+  const [importProgress, setImportProgress] = useState<{
+    done: number;
+    total: number;
+  } | null>(null);
+  const [importing, setImporting] = useState(false);
   const [addStatus, setAddStatus] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
 
@@ -68,20 +73,62 @@ export default function AddPage() {
 
   async function onImport(file: File | null) {
     if (!file) return;
-    setImportStatus("Importing and enriching with TMDB…");
+    setImporting(true);
+    setImportProgress(null);
+    setImportStatus("Reading CSV…");
+
     const body = new FormData();
     body.append("file", file);
+
     try {
       const res = await fetch("/api/import", { method: "POST", body });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "Import failed");
-      setImportStatus(
-        `Imported ${data.imported} rows (${data.added} new, ${data.updated} updated${
-          data.unresolved ? `, ${data.unresolved} unresolved` : ""
-        }${data.truncated ? "; large file truncated to 250" : ""}).`,
-      );
+
+      // Validation failures come back as plain JSON rather than a stream.
+      if (!res.ok || !res.body) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data.error || "Import failed");
+      }
+
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+
+      for (;;) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+
+        const lines = buffer.split("\n");
+        buffer = lines.pop() ?? "";
+
+        for (const line of lines) {
+          if (!line.trim()) continue;
+          const event = JSON.parse(line);
+
+          if (event.type === "start") {
+            setImportProgress({ done: 0, total: event.total });
+            setImportStatus(`Matching ${event.total} films against TMDB…`);
+          } else if (event.type === "progress") {
+            setImportProgress({ done: event.done, total: event.total });
+          } else if (event.type === "error") {
+            throw new Error(event.error);
+          } else if (event.type === "done") {
+            setImportProgress(null);
+            setImportStatus(
+              `Imported ${event.imported} films — ${event.added} new, ${event.updated} updated${
+                event.unresolved
+                  ? `, ${event.unresolved} not found on TMDB`
+                  : ""
+              }${event.truncated ? `; only the first ${event.imported} of ${event.parsed} rows` : ""}.`,
+            );
+          }
+        }
+      }
     } catch (err) {
+      setImportProgress(null);
       setImportStatus(err instanceof Error ? err.message : "Import failed");
+    } finally {
+      setImporting(false);
     }
   }
 
@@ -103,17 +150,55 @@ export default function AddPage() {
         <h2 className="display text-2xl">Letterboxd CSV</h2>
         <p className="mt-2 text-sm text-[var(--ink-soft)]">
           Accepts diary, ratings, or watched exports with Name / Year / Rating
-          columns.
+          columns. Each film is matched against TMDB, so large exports take a
+          moment — progress shows below.
         </p>
-        <label className="mt-4 inline-flex cursor-pointer bg-[var(--ink)] px-4 py-2.5 text-sm text-[var(--bg)] transition hover:bg-[var(--accent)]">
-          Choose CSV
+        <label
+          className={`mt-4 inline-flex bg-[var(--ink)] px-4 py-2.5 text-sm text-[var(--bg)] transition ${
+            importing
+              ? "cursor-not-allowed opacity-60"
+              : "cursor-pointer hover:bg-[var(--accent)]"
+          }`}
+        >
+          {importing ? "Importing…" : "Choose CSV"}
           <input
             type="file"
             accept=".csv,text/csv"
             className="hidden"
-            onChange={(e) => onImport(e.target.files?.[0] ?? null)}
+            disabled={importing}
+            onChange={(e) => {
+              onImport(e.target.files?.[0] ?? null);
+              e.target.value = "";
+            }}
           />
         </label>
+
+        {importProgress ? (
+          <div className="mt-4">
+            <div className="flex items-baseline justify-between text-xs uppercase tracking-[0.14em] text-[var(--ink-soft)]">
+              <span>
+                {importProgress.done} / {importProgress.total}
+              </span>
+              <span>
+                {Math.round(
+                  (importProgress.done / Math.max(1, importProgress.total)) *
+                    100,
+                )}
+                %
+              </span>
+            </div>
+            <div className="mt-2 h-1.5 bg-[rgba(23,20,18,0.08)]">
+              <div
+                className="h-full transition-all duration-300"
+                style={{
+                  width: `${(importProgress.done / Math.max(1, importProgress.total)) * 100}%`,
+                  background: "var(--forest)",
+                }}
+              />
+            </div>
+          </div>
+        ) : null}
+
         {importStatus ? (
           <p className="mt-3 text-sm text-[var(--forest)]">{importStatus}</p>
         ) : null}
