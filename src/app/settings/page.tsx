@@ -3,17 +3,36 @@
 import { useEffect, useState, type FormEvent } from "react";
 import type { ClaudeModel } from "@/lib/types";
 
-const MODEL_LABELS: Record<ClaudeModel, string> = {
-  "claude-sonnet-5": "Claude Sonnet 5 — balanced speed and judgment",
-  "claude-opus-5": "Claude Opus 5 — deepest reasoning, slower",
-  "claude-haiku-4-5": "Claude Haiku 4.5 — fastest and cheapest",
+/**
+ * Costs are for one For You refresh: roughly 8k input and 1k output tokens.
+ * The dossier is capped, so this holds whether the archive has 100 or 1000 films.
+ */
+const MODEL_INFO: Record<
+  ClaudeModel,
+  { label: string; perRefresh: string; note: string }
+> = {
+  "claude-haiku-4-5": {
+    label: "Haiku 4.5",
+    perRefresh: "~$0.01",
+    note: "Recommended. Ample for ranking and reasons.",
+  },
+  "claude-sonnet-5": {
+    label: "Sonnet 5",
+    perRefresh: "~$0.03",
+    note: "Sharper prose in reasons and taste reads.",
+  },
+  "claude-opus-5": {
+    label: "Opus 5",
+    perRefresh: "~$0.07",
+    note: "Deepest reasoning. Overkill for this task.",
+  },
 };
 
 export default function SettingsPage() {
   const [tmdbKey, setTmdbKey] = useState("");
   const [claudeKey, setClaudeKey] = useState("");
-  const [model, setModel] = useState<ClaudeModel>("claude-sonnet-5");
-  const [models, setModels] = useState<ClaudeModel[]>(["claude-sonnet-5"]);
+  const [model, setModel] = useState<ClaudeModel>("claude-haiku-4-5");
+  const [models, setModels] = useState<ClaudeModel[]>(["claude-haiku-4-5"]);
   const [hasKey, setHasKey] = useState(false);
   const [hasClaudeKey, setHasClaudeKey] = useState(false);
   const [ready, setReady] = useState(false);
@@ -28,8 +47,8 @@ export default function SettingsPage() {
       if (cancelled) return;
       setTmdbKey(data.tmdbApiKey ?? "");
       setClaudeKey(data.anthropicApiKey ?? "");
-      setModel(data.claudeModel ?? "claude-sonnet-5");
-      setModels(data.models ?? ["claude-sonnet-5"]);
+      setModel(data.claudeModel ?? "claude-haiku-4-5");
+      setModels(data.models ?? ["claude-haiku-4-5"]);
       setHasKey(Boolean(data.hasKey));
       setHasClaudeKey(Boolean(data.hasClaudeKey));
       setReady(true);
@@ -134,27 +153,56 @@ export default function SettingsPage() {
             />
           </label>
 
-          <label className="block">
-            <span className="text-xs uppercase tracking-[0.16em] text-[var(--ink-soft)]">
+          <fieldset className="mt-2">
+            <legend className="text-xs uppercase tracking-[0.16em] text-[var(--ink-soft)]">
               Model
-            </span>
-            <select
-              value={model}
-              onChange={(e) => setModel(e.target.value as ClaudeModel)}
-              disabled={!ready}
-              className="mt-2 w-full border border-[var(--line)] bg-transparent px-3 py-3 text-sm outline-none transition focus:border-[var(--ink)] disabled:opacity-60"
-            >
-              {models.map((m) => (
-                <option key={m} value={m}>
-                  {MODEL_LABELS[m] ?? m}
-                </option>
-              ))}
-            </select>
-          </label>
+            </legend>
+            <div className="mt-2 space-y-2">
+              {models.map((m) => {
+                const info = MODEL_INFO[m];
+                const selected = model === m;
+                return (
+                  <label
+                    key={m}
+                    className="flex cursor-pointer items-baseline gap-3 border p-3 transition"
+                    style={{
+                      borderColor: selected ? "var(--ink)" : "var(--line)",
+                    }}
+                  >
+                    <input
+                      type="radio"
+                      name="claude-model"
+                      value={m}
+                      checked={selected}
+                      onChange={() => setModel(m)}
+                      disabled={!ready}
+                      className="mt-1"
+                    />
+                    <span className="min-w-0 flex-1">
+                      <span className="flex flex-wrap items-baseline justify-between gap-2">
+                        <span className="text-sm">{info?.label ?? m}</span>
+                        <span
+                          className="text-xs uppercase tracking-[0.14em]"
+                          style={{ color: "var(--forest)" }}
+                        >
+                          {info?.perRefresh} / refresh
+                        </span>
+                      </span>
+                      <span className="mt-1 block text-sm text-[var(--ink-soft)]">
+                        {info?.note}
+                      </span>
+                    </span>
+                  </label>
+                );
+              })}
+            </div>
+          </fieldset>
 
           <p className="text-sm text-[var(--ink-soft)]">
             Claude ranks the TMDB shortlist against your watch history and
-            writes the reasons. Without a key, MovieBoxd falls back to heuristic
+            writes the reasons. Estimates assume roughly 8k input and 1k output
+            tokens per refresh; the dossier is capped, so cost stays flat as
+            your archive grows. Without a key, MovieBoxd falls back to heuristic
             scoring. Keys from{" "}
             <a
               href="https://console.anthropic.com/settings/keys"

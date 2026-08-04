@@ -9,7 +9,7 @@ const DEFAULT_STORE: AppStore = {
   settings: {
     tmdbApiKey: "",
     anthropicApiKey: "",
-    claudeModel: "claude-sonnet-5",
+    claudeModel: "claude-haiku-4-5",
   },
   movies: [],
 };
@@ -32,7 +32,7 @@ export async function readStore(): Promise<AppStore> {
       settings: {
         tmdbApiKey: parsed.settings?.tmdbApiKey ?? "",
         anthropicApiKey: parsed.settings?.anthropicApiKey ?? "",
-        claudeModel: parsed.settings?.claudeModel ?? "claude-sonnet-5",
+        claudeModel: parsed.settings?.claudeModel ?? "claude-haiku-4-5",
       },
       movies: Array.isArray(parsed.movies) ? parsed.movies : [],
     };

@@ -34,7 +34,17 @@ Open [http://localhost:3000](http://localhost:3000) and add your keys in **Setti
 | [TMDB API key](https://www.themoviedb.org/settings/api) | Yes | Search, import, candidate retrieval |
 | [Anthropic API key](https://console.anthropic.com/settings/keys) | Optional | Claude ranking, reasons, and taste read |
 
-Model is selectable (Sonnet 5, Opus 5, or Haiku 4.5).
+## Model choice and cost
+
+The dossier sent to Claude is capped, so one **For You** refresh costs roughly 8k input and 1k output tokens whether your archive holds 100 films or 1,000.
+
+| Model | Per refresh | Daily use / month |
+| --- | --- | --- |
+| **Haiku 4.5** (default) | ~$0.01 | ~$0.30 |
+| Sonnet 5 | ~$0.03 | ~$0.79 |
+| Opus 5 | ~$0.07 | ~$1.97 |
+
+Ranking a 45-film shortlist against a taste profile is a judgment-and-writing task, not a reasoning-heavy one, so Haiku 4.5 is the default. Step up to Sonnet 5 if you want more distinctive prose in the reasons and taste read.
 
 ## Letterboxd export tips
 
